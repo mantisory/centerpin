@@ -13,3 +13,9 @@ session/sess_*
 
 # OS cruft
 .DS_Store
+
+# Local secrets file (Stripe / SMTP keys)
+env
+
+# Local backup copy of server dotfiles
+well-known/
