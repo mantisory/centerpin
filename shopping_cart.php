@@ -21,6 +21,7 @@ src="https://code.jquery.com/jquery-3.6.3.min.js"
 integrity="sha256-pvPw+upLPUjgMXY0G+8O0xUf+/Im1MZjXxxgOcBQBXU="
 crossorigin="anonymous"></script>
 <script src="./js/cart.js"></script>
+<script src="./config/tariff.config.js?v=<?php echo filemtime(__DIR__ . '/config/tariff.config.js'); ?>"></script>
 <script src="./js/app.js"></script>
 <script src="./js/expedited_rates.js"></script>
 <script src="https://js.stripe.com/v3/"></script>

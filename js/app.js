@@ -333,8 +333,12 @@ $(document).ready(() => {
       $(
         "<div class='tariff-container'><span>Tariff Fees:</span><span id='tariff-fee'></span></div>",
       ).insertAfter(".summary-subtotal");
-      let tariff = parseFloat($(".order-total").text().replace("$", "")) * 0.5;
-      tariff = tariff < 25 ? 25 : tariff;
+      /* rates live in config/tariff.config.js */
+      let tariffSubtotal = parseFloat($(".order-total").text().replace("$", ""));
+      let tariff =
+        tariffSubtotal < tariffConfig.threshold
+          ? tariffConfig.preThresholdTariff
+          : (tariffSubtotal * tariffConfig.postThresholdTariff) / 100;
       $("#tariff-fee").text("$" + tariff.toFixed(2));
       //$('#tariff-fee').val()
       if (country != "") {
