@@ -1,0 +1,331 @@
+window.onload = function () {
+  var banner = document.getElementById("banner");
+  var activeFirstImage = 0; // Math.ceil(Math.random() * 4);
+  //setTimeout(function () {
+  $(banner).find("img").addClass("banner-logo");
+  for (var i = 0; i < 3; i++) {
+    $(banner).append(
+      "<img class='cycle-image " +
+        (i === activeFirstImage ? "active" : "") +
+        "' src='images/banner-pics/image" +
+        (i + 1) +
+        ".png'>"
+    );
+  }
+  //}, 15000);
+
+  try {
+    document.getElementById("tax-country").selectedIndex = 0;
+  } catch (e) {
+    //console.log(e);
+  }
+};
+
+function cycleImages() {
+  var $active = $(".active");
+  var $next =
+    $active.next().length > 0
+      ? $active.next()
+      : $(".banner-div .cycle-image:first");
+  $next.css("z-index", 2); //move the next image up the pile
+  $active.fadeOut(1500, function () {
+    //fade out the top image
+    $active.css("z-index", 1).show().removeClass("active"); //reset the z-index and unhide the image
+    $next.css("z-index", 3).addClass("active"); //make the next image the top one
+  });
+}
+$(document).ready(() => {
+  //setTimeout(function () {
+  //$(".banner-div").addClass("banner-div-loaded");
+  setInterval("cycleImages()", 15500);
+  //}, 15000);
+
+  // console.log($("#tax-country").val());
+  // $("#tax-country option:first").prop("selected", true);
+  let expeditedOpen = false;
+
+  let cart = JSON.parse(localStorage.getItem("shopping-cart")) || [];
+  if (cart.length > 0) {
+    $(".shopping-cart-link").removeClass("cart-empty");
+    let itemsPlural = cart.length === 1 ? " item)" : " items)";
+    $(".shopping-cart-link")
+      .find("span")
+      .text("View Cart (" + cart.length + itemsPlural);
+  } else {
+    $(".shopping-cart-link").addClass("cart-empty");
+  }
+
+  $(".option-selector").change((e) => {
+    let select = $(e.target);
+    let selected = select.find(":selected");
+    let text = selected.text();
+    let itemModel = ".item_model_" + $(e.target).attr("name").slice(-1);
+
+    select.closest("form").children(".amount").val(selected.val());
+    select.closest("form").children(itemModel).val(text);
+    select
+      .closest("form")
+      .find(".item-price")
+      .text("$" + selected.val());
+  });
+
+  $(".option-input").change((e) => {
+    let textBox = $(e.target);
+    let text = textBox.val();
+    let itemModel = ".item_model_" + $(e.target).attr("name").slice(-1);
+
+    textBox.closest("form").children(itemModel).val(text);
+  });
+  $(".option-input").each(function (index) {
+    // console.log("test");
+    let namer = $(this).closest("form").find("input[name*='on']");
+    let nameIndex = $(namer).attr("name").slice(-1);
+
+    $(this)
+      .closest("form")
+      .append(
+        '<input type="hidden" name="item_model_' +
+          nameIndex +
+          '" value="" class="item_model_' +
+          nameIndex +
+          '">'
+      );
+
+    $(this).trigger("change");
+  });
+  $(".option-selector").each(function (index) {
+    // console.log($(this).attr("name"));
+    let namer = $(this).closest("form").find("input[name*='on']");
+    // let nameIndex = $(namer).attr("name").slice(-1);
+    let nameIndex = $(this).attr("name").slice(-1);
+
+    $(this)
+      .closest("form")
+      .append('<input type="hidden" name="amount" value="" class="amount">');
+    $(this)
+      .closest("form")
+      .append(
+        '<input type="hidden" name="item_model_' +
+          nameIndex +
+          '" value="" class="item_model_' +
+          nameIndex +
+          '">'
+      );
+    $(this)
+      .closest("form")
+      .find("input[name='submit']")
+      .before(
+        "<p><span class='price-label'>Price:</span><span class='item-price'></span></p>"
+      );
+
+    $(this).trigger("change");
+  });
+
+  $("form").submit(function (event) {
+    //console.log($(event.target));
+    if ($(event.target).attr("id") !== "paypal-form") {
+      event.preventDefault();
+
+      let button;
+      console.log($(event.target).attr("id"));
+      if ($(event.target).has(".submit-button").length == 1) {
+        button = $(event.target).find(".submit-button");
+      } else {
+        button = $(event.target).find(".submit-button-small");
+      }
+
+      $(button).val("Added to Cart!").addClass("submit-added-to-cart");
+      addToCart($(this));
+      setTimeout(() => {
+        $(".cart-modal").hide();
+        if ($(event.target).hasClass("shipping-upgrade")) {
+          location.reload();
+        }
+        $(button).val("Add to Cart").removeClass("submit-added-to-cart");
+      }, 2000);
+      //   }
+    }
+  });
+
+  $(".spawnColorCount").on("click", ".addColor", function () {
+    let newColorContainer = $(".colorContainer").last().clone();
+    $(".colorContainer").last().find(".addColor").hide();
+    $(".colorContainer").find(".removeColor").show();
+    $(this).find(".removeColor").hide();
+    let colorIndex = +$(newColorContainer).attr("id").slice(-1) + 1;
+    let colorContainerCount = $(newColorContainer)
+      .find(".colorNumberInput")
+      .attr("name");
+
+    $(newColorContainer).attr("id", "colorContainer" + colorIndex);
+    $(newColorContainer).appendTo(".spawnColorCount");
+    $(".colorNumberInput").trigger("change");
+  });
+  $(".spawnColorCount").on("click", ".removeColor", function () {
+    $(this).closest(".colorContainer").remove();
+    $(".colorNumberInput").trigger("change");
+  });
+  $(".spawnColorCount").on("change", ".colorNumberInput", function () {
+    let total = 0;
+    $(".colorNumberInput").each(function () {
+      total += +$(this).val();
+      $(this)
+        .siblings(".numberColor")
+        .val(
+          $(this).val() +
+            " " +
+            $(this).siblings(".colorSelector").find(":selected").text()
+        );
+    });
+    $("#total").val(total);
+
+    $(".spawn-item-price").text(
+      "$" +
+        (
+          $("#price_per_dozen").val() * Math.floor(total / 12) +
+          $("#individual_price").val() * (total % 12)
+        ).toFixed(2)
+    );
+    $("#dozen_scarfs_amount").val(
+      $("#price_per_dozen").val() * Math.floor(total / 12) +
+        $("#individual_price").val() * (total % 12).toFixed(2)
+    );
+    let colorCount = ""; // $("#item_base_name").val();
+    $(".numberColor").each(function () {
+      colorCount += $(this).val() + ", ";
+    });
+    $("#dozen_scarfs_os0").val(colorCount);
+  });
+
+  $(".spawnColorCount").on("change", ".colorSelector", function () {
+    let total = 0;
+    $(".colorNumberInput").each(function () {
+      total += +$(this).val();
+      $(this)
+        .siblings(".numberColor")
+        .val(
+          $(this).val() +
+            " " +
+            $(this).siblings(".colorSelector").find(":selected").text()
+        );
+    });
+    $("#total").val(total);
+    $(".spawn-item-price").text(
+      "$" + $("#price_per_dozen").val() * Math.ceil(total / 12)
+    );
+    $("input[name='amount']").val(
+      $("#price_per_dozen").val() * Math.ceil(total / 12)
+    );
+    let colorCount = ""; // $("#item_base_name").val();
+    $(".numberColor").each(function () {
+      colorCount += $(this).val() + ", ";
+    });
+    $("input[name='os0']").val(colorCount);
+  });
+  $(".colorNumberInput").trigger("change");
+
+  $(".expedited-button").on("click", function () {
+    $(".expedited-shipping-rates").slideToggle();
+    expeditedOpen = !expeditedOpen;
+    let buttonText = expeditedOpen ? "Close" : "View Rates";
+    $(this).html(buttonText);
+    // if ($(".expedited-shipping-rates").data("open")) {
+    //   $(".expedited-shipping-rates").data("open", false);
+    //   $(".expedited-shipping-rates").slideUp();
+    // } else {
+    //   $(".expedited-shipping-rates").data("open", true);
+    //   $(".expedited-shipping-rates").slideDown();
+    // }
+  });
+
+  /* add taxes based on country */
+  $("#tax-country").on("change", function () {
+    $(".checkout-button")
+      .prop("disabled", true)
+      .addClass(" paypal-button-disabled");
+    document.getElementById("tax-province").selectedIndex = 0;
+    let country = $(this).val();
+    $("#s-h").text("$" + handlingTotal.toFixed(2));
+    $("input[name='handling_cart']").val(handlingTotal.toFixed(2));
+    let taxTotal = 0;
+    $("#tax-amount").text("");
+    if (country == "CA") {
+      $(".summary-tax-province-container ").removeClass("province-hidden");
+    } else {
+      $(".summary-tax-province-container ").addClass("province-hidden");
+      if (country != "") {
+        taxTotal = calculateTax(country);
+        $("#tax-amount").text("$" + taxTotal.toFixed(2));
+        $("#tax-cart").val(taxTotal.toFixed(2));
+      }
+      let totalAmount = (
+        parseFloat($('[name="handling_cart"]').val()) +
+        taxTotal +
+        parseFloat($(".order-total").text().replace("$", ""))
+      ).toFixed(2);
+      $("#total-amount-with-tax").text("$" + totalAmount);
+      $(".checkout-button")
+        .prop("disabled", false)
+        .removeClass(" paypal-button-disabled");
+    }
+  });
+  $("#tax-province").on("change", function () {
+    let province = $(this).val();
+    let country = $("#tax-country").val();
+    let taxTotal = 0;
+
+    if (province != "") {
+      taxTotal = calculateTax(country, province);
+      $("#tax-amount").text("$" + taxTotal.toFixed(2));
+      $("#tax-cart").val(taxTotal.toFixed(2));
+    }
+    let totalAmount = (
+      parseFloat($('[name="handling_cart"]').val()) +
+      taxTotal +
+      parseFloat($(".order-total").text().replace("$", ""))
+    ).toFixed(2);
+    $("#total-amount-with-tax").text("$" + totalAmount);
+    $(".checkout-button")
+      .prop("disabled", false)
+      .removeClass(" paypal-button-disabled");
+  });
+});
+
+function calculateTax(country, province) {
+  let taxTotal,
+    taxRate,
+    shippingEU,
+    curShipping,
+    totalShipping = 0;
+
+  if (country == "OT") {
+    shippingEU = $(".order-total").text().replace("$", "") * 0.1;
+    // curShipping = $("#s-h").text().replace("$", "") * 1.0;
+    curShipping = handlingTotal;
+    totalShipping = (curShipping + shippingEU).toFixed(2);
+    $("#s-h").text("$" + totalShipping);
+    $("input[name='handling_cart']").val(totalShipping);
+    taxTotal = 0;
+  } else if (country == "CA") {
+    taxRate =
+      province == "AB" ||
+      province == "BC" ||
+      province == "MB" ||
+      province == "NW" ||
+      province == "NN" ||
+      province == "QC" ||
+      province == "SK" ||
+      province == "YK"
+        ? 0.05
+        : province == "ON"
+        ? 0.13
+        : 0.15;
+
+    taxTotal =
+      (handlingTotal + parseFloat($(".order-total").text().replace("$", ""))) *
+      taxRate;
+  } else {
+    taxTotal = 0;
+  }
+  return taxTotal;
+}

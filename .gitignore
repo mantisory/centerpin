@@ -1,0 +1,15 @@
+# Secrets / local environment
+.env
+.ftpquota
+
+# PHP session files (contain user session data)
+session/sess_*
+
+# Logs (contain customer emails / webhook payloads)
+*.log
+
+# Large archives (exceed GitHub's 100MB file limit)
+*.zip
+
+# OS cruft
+.DS_Store

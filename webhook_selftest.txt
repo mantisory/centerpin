@@ -1,0 +1,295 @@
+<?php
+// ============================================================
+// TEMPORARY SELF-TEST — DELETE THIS FILE AFTER DEBUGGING.
+//
+// Usage (browser or curl):
+//   https://yourdomain.com/webhook_selftest.php?key=cp2026
+//   https://yourdomain.com/webhook_selftest.php?key=cp2026&sendmail=1
+//
+// Without &sendmail=1 it only checks config/env (read-only).
+// With  &sendmail=1 it sends a real test email to NOTIFICATION_EMAIL
+// and writes to mail.log exactly like the webhook does.
+// ============================================================
+
+header('Content-Type: text/plain; charset=utf-8');
+header('X-Accel-Buffering: no');
+error_reporting(E_ALL);
+ini_set('display_errors', '1');
+ini_set('default_socket_timeout', '10');   // don't hang 60s on a blocked port
+set_time_limit(120);
+
+// Stream output live so a slow SMTP step doesn't look like a dead page
+while (ob_get_level() > 0) { ob_end_flush(); }
+ob_implicit_flush(true);
+echo str_repeat(' ', 4096) . "\n";   // defeat server-side buffering
+
+// Simple gate so random visitors can't trigger emails
+if (($_GET['key'] ?? '') !== 'cp2026') {
+    http_response_code(403);
+    exit("Forbidden. Append ?key=cp2026 to the URL.\n");
+}
+
+function ok(string $msg): void   { echo "  [PASS] {$msg}\n"; }
+function bad(string $msg): void  { echo "  [FAIL] {$msg}\n"; }
+function info(string $msg): void { echo "         {$msg}\n"; }
+
+// Mask a secret: show first 7 chars + length, never the full value
+function mask(?string $v): string {
+    if ($v === null || $v === '') return '(empty)';
+    return substr($v, 0, 7) . '... (' . strlen($v) . ' chars)';
+}
+
+echo "================ WEBHOOK SELF-TEST ================\n";
+echo "Time: " . date('Y-m-d H:i:s') . "\n";
+echo "PHP:  " . PHP_VERSION . "\n";
+echo "Dir:  " . __DIR__ . "\n\n";
+
+// ---------------------------------------------------------
+// STEP 1 — Environment detection (mirrors config/stripe.php)
+// ---------------------------------------------------------
+echo "STEP 1: Environment detection\n";
+
+$appEnvRaw = getenv('APP_ENV');
+info("getenv('APP_ENV') = " . var_export($appEnvRaw, true));
+
+$rootEnvExists = file_exists(__DIR__ . '/.env');
+info("project-root .env exists: " . ($rootEnvExists ? 'YES' : 'NO'));
+
+$appEnv = $appEnvRaw ?: ($rootEnvExists ? 'dev' : 'prod');
+info("resolved environment: '{$appEnv}'");
+
+if ($appEnv === 'prod') {
+    ok("Running in PROD mode");
+} else {
+    bad("Running in '{$appEnv}' mode — on the live server this should be 'prod'.");
+    info("Cause: a .env file exists in the web root, or APP_ENV is set.");
+    info("Fix: delete the web-root .env on the server (it belongs in /home/cent2063/.env).");
+}
+echo "\n";
+
+// ---------------------------------------------------------
+// STEP 2 — Per-environment config file
+// ---------------------------------------------------------
+echo "STEP 2: Config file (config/stripe.{$appEnv}.php)\n";
+
+$envConfig = __DIR__ . '/config/stripe.' . $appEnv . '.php';
+if (!file_exists($envConfig)) {
+    bad("Missing: {$envConfig}");
+    exit("\nABORTED — upload the config folder.\n");
+}
+ok("Found: {$envConfig}");
+
+require $envConfig;   // sets $_envFile
+info("\$_envFile points to: {$_envFile}");
+
+$expected = '/home/cent2063/.env';
+if ($appEnv === 'prod' && $_envFile !== $expected) {
+    bad("Expected '{$expected}' but config says '{$_envFile}'.");
+    info("Fix: edit config/stripe.prod.php on the server.");
+}
+echo "\n";
+
+// ---------------------------------------------------------
+// STEP 3 — .env file exists, readable, parses
+// ---------------------------------------------------------
+echo "STEP 3: .env file at {$_envFile}\n";
+
+if (!file_exists($_envFile)) {
+    bad("File does not exist.");
+    info("Upload .env to {$_envFile} (outside the web root).");
+    exit("\nABORTED — nothing more to test without .env.\n");
+}
+ok("File exists.");
+
+if (!is_readable($_envFile)) {
+    bad("File exists but PHP cannot read it (permissions).");
+    info("Fix: chmod 644 {$_envFile} (or 640 with correct group).");
+    exit("\nABORTED.\n");
+}
+ok("File is readable.");
+
+$env = parse_ini_file($_envFile, false, INI_SCANNER_RAW);
+if ($env === false) {
+    bad("parse_ini_file() failed — file has a syntax problem.");
+    info("Common cause: unquoted special characters (#, =, quotes) in a value.");
+    info("Fix: wrap values in double quotes, e.g. SMTP_PASS=\"p@ss#word\"");
+    exit("\nABORTED.\n");
+}
+ok("Parsed OK — " . count($env) . " keys found.");
+echo "\n";
+
+// ---------------------------------------------------------
+// STEP 4 — Required keys present (values masked)
+// ---------------------------------------------------------
+echo "STEP 4: Required keys\n";
+
+$required = [
+    'STRIPE_SECRET_KEY', 'STRIPE_PUBLISHABLE_KEY', 'STRIPE_WEBHOOK_SECRET',
+    'NOTIFICATION_EMAIL', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS',
+];
+$missing = [];
+foreach ($required as $k) {
+    $v = $env[$k] ?? '';
+    if ($v === '') {
+        bad("{$k} = MISSING or empty");
+        $missing[] = $k;
+    } else {
+        ok("{$k} = " . mask($v));
+    }
+}
+
+// Sanity hints on key prefixes
+$sk = $env['STRIPE_SECRET_KEY'] ?? '';
+if ($sk && str_starts_with($sk, 'sk_test_')) {
+    info("NOTE: STRIPE_SECRET_KEY is a TEST key. Live payments won't use it.");
+}
+$ws = $env['STRIPE_WEBHOOK_SECRET'] ?? '';
+if ($ws && !str_starts_with($ws, 'whsec_')) {
+    bad("STRIPE_WEBHOOK_SECRET doesn't start with 'whsec_' — wrong value?");
+}
+echo "\n";
+
+// ---------------------------------------------------------
+// STEP 5 — PHPMailer library files
+// ---------------------------------------------------------
+echo "STEP 5: PHPMailer library (session/lib/)\n";
+
+$libOk = true;
+foreach (['PHPMailer.php', 'SMTP.php', 'Exception.php'] as $f) {
+    $p = __DIR__ . '/session/lib/' . $f;
+    if (file_exists($p)) {
+        ok("session/lib/{$f}");
+    } else {
+        bad("session/lib/{$f} MISSING — webhook.php will fatal at require.");
+        $libOk = false;
+    }
+}
+echo "\n";
+
+// ---------------------------------------------------------
+// STEP 6 — Write permission for log files
+// ---------------------------------------------------------
+echo "STEP 6: Log file write permissions (web root)\n";
+
+$probe = __DIR__ . '/selftest_write_probe.tmp';
+if (@file_put_contents($probe, 'x') !== false) {
+    ok("Web root is writable (mail.log / orders.log / webhook.log can be created).");
+    @unlink($probe);
+} else {
+    bad("Cannot write to web root — mail.log will never appear even if mail sends.");
+}
+echo "\n";
+
+// ---------------------------------------------------------
+// STEP 7 — SMTP send test (only with &sendmail=1)
+// ---------------------------------------------------------
+echo "STEP 7: SMTP email test\n";
+
+if (($_GET['sendmail'] ?? '') !== '1') {
+    info("Skipped. Re-run with &sendmail=1 to send a real test email");
+    info("to NOTIFICATION_EMAIL (" . ($env['NOTIFICATION_EMAIL'] ?? '?') . ").");
+    echo "\n================ DONE ================\n";
+    exit;
+}
+
+if (!$libOk) {
+    bad("Cannot test — PHPMailer files missing (see STEP 5).");
+    exit("\n================ DONE ================\n");
+}
+if ($missing) {
+    bad("Cannot test — missing keys: " . implode(', ', $missing));
+    exit("\n================ DONE ================\n");
+}
+
+// --- Pre-flight: can this server even open a TCP connection to SMTP? ---
+// A blocked port is the #1 cause of "the page just hangs".
+echo "  Pre-flight TCP connect tests (8s timeout each):\n";
+
+$targets = [
+    [$env['SMTP_HOST'], (int)$env['SMTP_PORT']],   // configured
+    [$env['SMTP_HOST'], 465],                      // SMTPS alternative
+    ['localhost', 25],                             // local MTA (common on cPanel)
+];
+$reachable = [];
+foreach ($targets as [$h, $p]) {
+    $t0 = microtime(true);
+    $fp = @fsockopen($h, $p, $errno, $errstr, 8);
+    $ms = (int)round((microtime(true) - $t0) * 1000);
+    if ($fp) {
+        $banner = trim((string)@fgets($fp, 256));
+        fclose($fp);
+        ok("{$h}:{$p} reachable ({$ms}ms) " . ($banner ? "banner: {$banner}" : ''));
+        $reachable["{$h}:{$p}"] = true;
+    } else {
+        bad("{$h}:{$p} BLOCKED/unreachable ({$ms}ms) err: {$errstr} ({$errno})");
+    }
+}
+
+$cfgKey = $env['SMTP_HOST'] . ':' . $env['SMTP_PORT'];
+if (empty($reachable[$cfgKey])) {
+    bad("Configured SMTP target {$cfgKey} is unreachable — this is why the webhook can't mail.");
+    if (!empty($reachable[$env['SMTP_HOST'] . ':465'])) {
+        info("Port 465 IS open. Fix: set SMTP_PORT=465 in .env and use SMTPS,");
+        info("and change ENCRYPTION_STARTTLS to ENCRYPTION_SMTPS in webhook.php.");
+    }
+    if (!empty($reachable['localhost:25'])) {
+        info("localhost:25 IS open. Alternative: SMTP_HOST=localhost, SMTP_PORT=25 in .env");
+        info("(works when the mail account is hosted on this same server).");
+    }
+    exit("\n================ DONE ================\n");
+}
+echo "\n";
+
+require_once __DIR__ . '/session/lib/PHPMailer.php';
+require_once __DIR__ . '/session/lib/SMTP.php';
+require_once __DIR__ . '/session/lib/Exception.php';
+
+$mail = new PHPMailer\PHPMailer\PHPMailer(true);
+try {
+    // Capture verbose SMTP conversation so failures are diagnosable
+    $smtpLog = '';
+    $mail->SMTPDebug   = 2;
+    $mail->Debugoutput = function ($str) use (&$smtpLog) { $smtpLog .= $str . "\n"; };
+
+    $mail->isSMTP();
+    $mail->Host       = $env['SMTP_HOST'];
+    $mail->SMTPAuth   = true;
+    $mail->Username   = $env['SMTP_USER'];
+    $mail->Password   = $env['SMTP_PASS'];
+    // Port 465 = implicit TLS (SMTPS); 587/25 = STARTTLS.
+    // Using STARTTLS on 465 hangs: the server waits for a TLS handshake
+    // while PHPMailer waits for a plaintext banner.
+    $port = (int)$env['SMTP_PORT'];
+    $mail->SMTPSecure = ($port === 465)
+        ? PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_SMTPS
+        : PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
+    $mail->Port       = $port;
+    $mail->Timeout    = 15;
+    info("Using " . ($port === 465 ? 'SMTPS (implicit TLS)' : 'STARTTLS') . " on port {$port}");
+
+    $mail->setFrom($env['SMTP_USER'], 'Centerpin Angling (self-test)');
+    $mail->addAddress($env['NOTIFICATION_EMAIL']);
+    $mail->isHTML(true);
+    $mail->Subject = 'Webhook self-test — ' . date('Y-m-d H:i:s');
+    $mail->Body    = '<p>If you are reading this, SMTP from the webhook server works.</p>';
+
+    $mail->send();
+    ok("Email SENT to " . $env['NOTIFICATION_EMAIL']);
+
+    // Write mail.log the same way webhook.php does, to prove that works too
+    $line = '[' . date('Y-m-d H:i:s') . "] MAIL OK  to:{$env['NOTIFICATION_EMAIL']} id:SELFTEST\n";
+    if (@file_put_contents(__DIR__ . '/mail.log', $line, FILE_APPEND | LOCK_EX) !== false) {
+        ok("mail.log written at " . __DIR__ . '/mail.log');
+    } else {
+        bad("Email sent but mail.log could NOT be written (permissions).");
+    }
+} catch (\Throwable $e) {
+    bad("Send FAILED: " . $e->getMessage());
+    echo "\n--- SMTP conversation ---\n" . $smtpLog . "-------------------------\n";
+    info("Common causes:");
+    info("- Wrong SMTP_PASS, or host requires an app-specific password");
+    info("- Host blocks outbound port {$env['SMTP_PORT']} (try 465 + SMTPS)");
+    info("- SMTP_HOST should often be 'localhost' on shared cPanel hosting");
+}
+
+echo "\n================ DONE ================\n";

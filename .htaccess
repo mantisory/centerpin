@@ -1,0 +1,17 @@
+<IfModule mod_php.c>
+    php_value session.cookie_lifetime "1200"
+    php_value session.gc_maxlifetime "1200"
+</IfModule>
+# Block direct web access to sensitive files
+<Files ".env">
+    Order allow,deny
+    Deny from all
+</Files>
+
+<Files "orders.log">
+    Order allow,deny
+    Deny from all
+</Files>
+
+# PHP files in config/ are blocked by config/.htaccess
+# (<DirectoryMatch> is not allowed in .htaccess files)

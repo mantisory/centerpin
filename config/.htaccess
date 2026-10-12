@@ -1,0 +1,6 @@
+# Block direct web access to PHP config files (Stripe keys).
+# The .json/.js files here are fetched by the browser and must stay reachable.
+<FilesMatch "\.php$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
